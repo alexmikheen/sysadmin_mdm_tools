@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
 [![Shell](https://img.shields.io/badge/Shell-zsh-blue.svg)](https://www.zsh.org/)
 
-A production-ready lab and collection of scripts, utilities, and automation workflows for macOS system administrators and IT platform engineers managing device fleets via Mobile Device Management (MDM) platforms, such as **Kandji**, **Jamf Pro**, **Microsoft Intune**, **Mosyle**, and **SimpleMDM**.
+A production-ready lab and collection of scripts, utilities, and automation workflows for macOS system administrators and IT platform engineers managing device fleets via Mobile Device Management (MDM) platforms, such as **IRU (Kandji)**, **Jamf Pro**, **Microsoft Intune**, **Mosyle**, and **SimpleMDM**.
 
 ---
 
@@ -58,7 +58,7 @@ Performs safe, unattended upgrades of all eligible Homebrew packages and casks.
 - **Safety & Guardrails**:
   - **Battery Safeguard**: Automatically aborts if running on battery power with less than 20% charge remaining.
   - **Sleep Prevention (`caffeinate`)**: Prevents system sleep during active package upgrades.
-  - **Time Budget Enforcement**: Standard MDM agents (such as Kandji) hard-kill scripts after 60 minutes. The script enforces an internal 45-minute budget to finish ongoing operations cleanly and exit gracefully before hitting agent timeouts. The next cycle will pick up remaining tasks.
+  - **Time Budget Enforcement**: Standard MDM agents (such as IRU (Kandji)) hard-kill scripts after 60 minutes. The script enforces an internal 45-minute budget to finish ongoing operations cleanly and exit gracefully before hitting agent timeouts. The next cycle will pick up remaining tasks.
   - **GUI App Protection**: Sets `HOMEBREW_NO_UPGRADE_QUIT_CASKS=1` and performs process checks (`pgrep`) to prevent disrupting user workflows by terminating running apps.
   - **MDM Ownership & Team ID Matching**: Inspects Developer Team IDs to prevent clobbering or duplicate installations of apps already managed by MDM (Auto Apps).
 - **Log Path**: `/var/log/brew-global-remediation.log`
@@ -67,7 +67,7 @@ Performs safe, unattended upgrades of all eligible Homebrew packages and casks.
 
 ## 🚀 MDM Deployment Guide
 
-### Kandji (Custom Scripts / Automated Remediation)
+### IRU (Kandji) (Custom Scripts / Automated Remediation)
 1. Navigate to **Library** > **Add New** > **Custom Script**.
 2. Paste the contents of [`Homebrew/audit_update.sh`](Homebrew/audit_update.sh) into the **Audit Script** section.
 3. Paste the contents of [`Homebrew/remediate_update.sh`](Homebrew/remediate_update.sh) into the **Remediation Script** section.
