@@ -1,19 +1,35 @@
-#!/usr/bin/env zsh
+#!/bin/zsh
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2024-2026 Aleksandr Mikheenko (alexmikheen)
 # Licensed under the MIT License. See LICENSE in the project root for details.
 #
-# Description: Global audit script to check if ANY unpinned Homebrew packages (formulae or casks) require updates, run from a root MDM execution context. Exit 1 = remediation required or a prefix could not be evaluated; exit 0 = compliant.
+# Description: Audit all unpinned Homebrew formulae and casks from a root MDM context.
+# Dependencies: stat, awk, dscl, brew.
+# Expected Result: Exit 1 if an unpinned package is outdated or a prefix cannot run. Exit 0 if all prefixes are compliant.
+# Required Permissions: root (MDM execution context).
+# Inputs: none.
+# Outputs: Status messages to stdout.
+# Logs Place: /var/log/brew-global-audit.log.
+# Rollback: none.
+# Safety Notes: Respects pinned formulae and avoids running brew update during the audit.
+
+if [ -z "${ZSH_VERSION:-}" ]; then
+    exec /bin/zsh "$0" "$@"
+fi
 
 set -e
 set -u
 set -o pipefail
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 LOG_FILE="/var/log/brew-global-audit.log"
-mkdir -p "$(dirname "$LOG_FILE")"
-exec > >(tee -a "$LOG_FILE") 2>&1
+if [[ ! -w "$(/usr/bin/dirname "$LOG_FILE")" || ( -e "$LOG_FILE" && ! -w "$LOG_FILE" ) ]]; then
+    LOG_FILE="/tmp/$(/usr/bin/basename "$LOG_FILE")"
+fi
+/bin/mkdir -p "$(/usr/bin/dirname "$LOG_FILE")"
+exec > >(/usr/bin/tee -a "$LOG_FILE") 2>&1
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+log() { echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 log "=== Starting Global Brew Vulnerability Audit (Multi-Arch) ==="
 
@@ -28,8 +44,8 @@ user_home=$(/usr/bin/dscl . -read "/Users/$console_user" NFSHomeDirectory | /usr
 host_arch=$(/usr/bin/uname -m)
 
 candidate_brews=(
-  /opt/homebrew/bin/brew   # Apple Silicon
-  /usr/local/bin/brew      # Intel
+  /opt/homebrew/bin/brew
+  /usr/local/bin/brew
 )
 
 run_brew() {
@@ -63,7 +79,7 @@ for brew_bin in "${candidate_brews[@]}"; do
         continue
     }
 
-    # 1. Check the last time 'brew update' was run natively for this prefix. Take the last ABSOLUTE-PATH line: a trailing env hint/warning on the merged stream would otherwise corrupt the repo path and defeat the FETCH_HEAD freshness check (false daily staleness).
+    # Read the last line that starts with a slash to ignore environment hints.
     BREW_REPO=$(echo "$BREW_PROBE" | /usr/bin/grep '^/' | /usr/bin/tail -n 1 || true)
     BREW_CACHE=$(run_brew "$brew_bin" "$wrap" --cache 2>/dev/null) || {
         log "Audit WARN: brew --cache failed for $brew_bin — skipping this prefix."
@@ -81,7 +97,7 @@ for brew_bin in "${candidate_brews[@]}"; do
         [[ "$MOD_TIME" -gt "$LAST_UPDATE" ]] && LAST_UPDATE=$MOD_TIME
     fi
 
-    CURRENT_TIME=$(date "+%s")
+    CURRENT_TIME=$(/bin/date "+%s")
     DIFF_DAYS=$(( (CURRENT_TIME - LAST_UPDATE) / 86400 ))
 
     if [[ "$LAST_UPDATE" -eq 0 || "$DIFF_DAYS" -ge 2 ]]; then
@@ -90,15 +106,14 @@ for brew_bin in "${candidate_brews[@]}"; do
         continue
     fi
 
-    # 2. Check local cache for outdated packages
     OUTDATED_PACKAGES=$(run_brew "$brew_bin" "$wrap" outdated --formula -q 2>/dev/null || true)
 
     if [[ -n "$OUTDATED_PACKAGES" ]]; then
         for PKG in ${(f)OUTDATED_PACKAGES}; do
             [[ -z "$PKG" ]] && continue
-            # Use brew info --json to check pin status per-package. 'brew list --pinned' can return empty in some MDM execution contexts.
+            # Query pin status per package because brew list --pinned can return empty under MDM.
             PKG_INFO=$(run_brew "$brew_bin" "$wrap" info --json=v2 "$PKG" 2>/dev/null || true)
-            if echo "$PKG_INFO" | grep -q '"pinned":true'; then
+            if echo "$PKG_INFO" | /usr/bin/grep -q '"pinned":true'; then
                 log "Audit OK: Package '$PKG' in $brew_bin is outdated but pinned by user policy. Skipping."
                 continue
             fi
@@ -108,7 +123,6 @@ for brew_bin in "${candidate_brews[@]}"; do
         done
     fi
 
-    # 3. Check for outdated casks (GUI apps)
     OUTDATED_CASKS=$(run_brew "$brew_bin" "$wrap" outdated --cask -q 2>/dev/null || true)
     if [[ -n "$OUTDATED_CASKS" ]]; then
         FIRST_CASK=$(echo "$OUTDATED_CASKS" | /usr/bin/head -n 1)

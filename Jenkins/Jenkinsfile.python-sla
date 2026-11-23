@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: MIT
+
+pipeline {
+    agent {
+        label "${params.AGENT_LABEL ?: 'mdm-sync'}"
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    triggers {
+        cron('45 13 * * *')
+    }
+
+    parameters {
+        string(
+            name: 'AGENT_LABEL',
+            defaultValue: 'mdm-sync',
+            description: 'Jenkins agent label with persistent notification state'
+        )
+        booleanParam(
+            name: 'APPLY_CHANGES',
+            defaultValue: false,
+            description: 'Apply MDM script patch and send Slack notifications on manual runs'
+        )
+        string(
+            name: 'MDM_SELF_SERVICE_SCRIPT_ID',
+            defaultValue: '',
+            description: 'Optional MDM Custom Script ID for Self Service cleanup status'
+        )
+    }
+
+    environment {
+        NOTIFY_STATE_FILE = "${env.WORKSPACE}/.jenkins_python_notify_state.json"
+        REPORT_FILE = "${env.WORKSPACE}/python_cve_sla_report.json"
+        MDM_SELF_SERVICE_SCRIPT_ID = "${params.MDM_SELF_SERVICE_SCRIPT_ID ?: ''}"
+    }
+
+    stages {
+        stage('Validate Environment') {
+            steps {
+                sh 'python3 --version'
+                sh 'python3 -m unittest discover -s Jenkins/tests -v'
+            }
+        }
+
+        stage('Sync Python CVE SLA and Notify') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'mdm-api-url', variable: 'MDM_API_URL'),
+                    string(credentialsId: 'mdm-api-token', variable: 'MDM_API_TOKEN'),
+                    string(credentialsId: 'slack-bot-token', variable: 'SLACK_BOT_TOKEN'),
+                    string(credentialsId: 'mdm-audit-script-id', variable: 'MDM_AUDIT_SCRIPT_ID'),
+                    string(credentialsId: 'mdm-remediation-script-id', variable: 'MDM_REMEDIATION_SCRIPT_ID'),
+                    string(credentialsId: 'slack-ops-channel', variable: 'SLACK_OPS_CHANNEL'),
+                    string(credentialsId: 'exception-portal-url', variable: 'EXCEPTION_PORTAL_URL')
+                ]) {
+                    script {
+                        def isTimerTrigger = currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause').size() > 0
+                        def effectiveApply = params.APPLY_CHANGES || isTimerTrigger
+                        withEnv(["MODE_FLAG=${effectiveApply ? '--apply' : '--dry-run'}"]) {
+                            sh '''
+                                python3 Jenkins/python_cve_sla_sync.py \
+                                    "$MODE_FLAG" \
+                                    --state-file "$NOTIFY_STATE_FILE" \
+                                    --report-file "$REPORT_FILE"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'python_cve_sla_report.json', allowEmptyArchive: true
+        }
+    }
+}

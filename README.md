@@ -1,85 +1,117 @@
-# Sysadmin MDM Tools & Scripts Lab
+# Sysadmin MDM Tools
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
 [![Shell](https://img.shields.io/badge/Shell-zsh-blue.svg)](https://www.zsh.org/)
 
-A production-ready lab and collection of scripts, utilities, and automation workflows for macOS system administrators and IT platform engineers managing device fleets via Mobile Device Management (MDM) platforms, such as **IRU (Kandji)**, **Jamf Pro**, **Microsoft Intune**, **Mosyle**, and **SimpleMDM**.
+This repository contains scripts and automation workflows for macOS system administrators.
+Use these tools with Mobile Device Management (MDM) platforms such as IRU (Kandji), Jamf Pro, Microsoft Intune, Mosyle, and SimpleMDM.
 
----
+## Overview
 
-## 📌 Overview
+MDM agents run scripts as `root` on macOS devices.
+Developer tools, package managers, and desktop apps run in the logged-in user session.
+These modules solve three operational problems:
 
-Managing macOS workstations via MDM presents unique architectural hurdles:
-- **Root vs. User Execution Context**: MDM agents execute payloads as privileged `root`, whereas user environments, preferences, and developer tools (like Homebrew and GUI applications) live in the logged-in user's space.
-- **Reliability & Safeguards**: Automated remediation must not drain user battery, corrupt package states due to sudden sleep/hibernation, or get terminated mid-upgrade when hitting agent execution timeouts.
-- **Fleet Architecture**: Seamless support across multi-architecture environments (Apple Silicon `arm64` and Intel `x86_64`).
+- **Execution context**: Scripts run as `root` from the MDM agent and drop privileges into the active console user session when needed.
+- **Device safety**: Scripts check battery charge, block system sleep with `caffeinate`, and stop before MDM agent timeout limits.
+- **Architecture support**: Scripts inspect both Apple Silicon (`/opt/homebrew`) and Intel (`/usr/local`) environments.
 
-This repository provides field-tested, robust scripts designed specifically for automated **Audit & Remediation** workflows.
-
----
-
-## 📂 Repository Structure
+## Repository Structure
 
 ```text
 sysadmin_mdm_tools/
 ├── Homebrew/
-│   ├── audit_update.sh       # Global audit script for Homebrew packages & cache
-│   └── remediate_update.sh   # Safe, multi-arch Homebrew remediation script
-├── LICENSE                   # MIT License
-└── README.md                 # Project documentation
+│   ├── audit_update.sh                  # Audits Homebrew formulae, casks, and cache state
+│   ├── remediate_update.sh              # Updates Homebrew packages with safety checks
+│   ├── install.sh                       # Installs Homebrew and required developer tools
+│   ├── tests/
+│   │   └── test_remediate_update.zsh    # Automated unit tests for Homebrew scripts
+│   └── README.md                        # Module documentation for Homebrew scripts
+├── Python/
+│   ├── audit_update.sh                  # Audits local Python installations and CVE status
+│   ├── remediate_update.sh              # Removes out-of-policy Python installations
+│   ├── self_service_cleanup.sh          # Interactive Python removal script for end users
+│   └── README.md                        # Module documentation for Python scripts
+├── Jenkins/
+│   ├── python_cve_sla_sync.py           # Computes Python CVE deadlines and patches MDM scripts
+│   ├── security_notifier.py             # Sends deduplicated Slack alerts to device owners
+│   ├── Jenkinsfile.python-sla           # Scheduled Jenkins pipeline for CVE SLA sync
+│   ├── tests/
+│   │   └── test_python_cve_sla.py       # Unit tests for SLA sync and Slack notifications
+│   └── README.md                        # Module documentation for Jenkins pipeline
+├── Monitors/
+│   ├── audit_monitors.sh                # Audits external display inventory records
+│   ├── remediate_monitors.sh            # Collects and logs external display hardware data
+│   └── README.md                        # Module documentation for display tracking
+├── LICENSE                              # MIT License
+└── README.md                            # Root repository documentation
 ```
 
----
+## Modules
 
-## 🛠 Tools & Modules
+### Homebrew (`Homebrew/`)
 
-### 🍺 `Homebrew/` Directory
+This module installs, audits, and updates Homebrew formulae and GUI casks on macOS devices.
+See [`Homebrew/README.md`](Homebrew/README.md) for deployment steps, safety checks, and log paths.
 
-Scripts designed to audit and safely update Homebrew packages (CLI formulae and GUI casks) across corporate macOS fleets.
+- **`Homebrew/audit_update.sh`**: Checks cache freshness, outdated unpinned formulae, and outdated casks. Exits `0` when compliant and `1` when the device requires updates. Writes logs to `/var/log/brew-global-audit.log`.
+- **`Homebrew/remediate_update.sh`**: Updates eligible Homebrew packages and casks. Checks battery level (minimum 20%), uses `caffeinate`, enforces a 45-minute budget, protects running GUI apps, and skips MDM-managed apps by Team ID. Writes logs to `/var/log/brew-global-remediation.log`.
+- **`Homebrew/install.sh`**: Installs Homebrew and configures developer tools on new devices. Writes logs to `/var/log/brew-install.log`.
+- **`Homebrew/tests/test_remediate_update.zsh`**: Runs automated tests for developer-tool checks and remediation logic.
 
-#### 1. `Homebrew/audit_update.sh` (Audit Script)
-Evaluates compliance of the target Mac against software currency policies without making any modifications.
+### Python (`Python/`)
 
-- **Multi-Architecture**: Automatically inspects both Apple Silicon (`/opt/homebrew`) and Intel (`/usr/local`) prefixes.
-- **Context Handling**: Executes as `root` from the MDM agent, resolves the active console user via `/dev/console`, and drops privileges into the user's session via `launchctl asuser` and `sudo -u`.
-- **Key Checks**:
-  - **Cache Freshness**: Verifies `FETCH_HEAD` / `formula.jws.json`. If the cache is older than 2 days or missing, remediation is triggered.
-  - **Outdated Formulae**: Detects unpinned CLI packages requiring updates while strictly respecting packages pinned by the user (`"pinned": true`).
-  - **Outdated Casks**: Identifies outdated GUI applications installed via Homebrew.
-- **Exit Codes**:
-  - `0`: Compliant (Homebrew is not installed, or all unpinned packages and casks are up to date).
-  - `1`: Non-compliant / Remediation required (outdated packages found or cache probe failed).
-- **Log Path**: `/var/log/brew-global-audit.log`
+This module audits local Python runtimes and removes vulnerable or unsupported versions.
+See [`Python/README.md`](Python/README.md) for configuration options and log formats.
 
-#### 2. `Homebrew/remediate_update.sh` (Remediation Script)
-Performs safe, unattended upgrades of all eligible Homebrew packages and casks.
+- **`Python/audit_update.sh`**: Scans common Python paths, checks versions against policy, and outputs structured inventory lines.
+- **`Python/remediate_update.sh`**: Removes out-of-policy Python installations after SLA deadlines pass.
+- **`Python/self_service_cleanup.sh`**: Lets users remove out-of-policy Python installations through MDM Self Service before forced remediation.
 
-- **Safety & Guardrails**:
-  - **Battery Safeguard**: Automatically aborts if running on battery power with less than 20% charge remaining.
-  - **Sleep Prevention (`caffeinate`)**: Prevents system sleep during active package upgrades.
-  - **Time Budget Enforcement**: Standard MDM agents (such as IRU (Kandji)) hard-kill scripts after 60 minutes. The script enforces an internal 45-minute budget to finish ongoing operations cleanly and exit gracefully before hitting agent timeouts. The next cycle will pick up remaining tasks.
-  - **GUI App Protection**: Sets `HOMEBREW_NO_UPGRADE_QUIT_CASKS=1` and performs process checks (`pgrep`) to prevent disrupting user workflows by terminating running apps.
-  - **MDM Ownership & Team ID Matching**: Inspects Developer Team IDs to prevent clobbering or duplicate installations of apps already managed by MDM (Auto Apps).
-- **Log Path**: `/var/log/brew-global-remediation.log`
+### Jenkins (`Jenkins/`)
 
----
+This module automates Python CVE SLA tracking, MDM script patching, and user notifications.
+See [`Jenkins/README.md`](Jenkins/README.md) for environment variables and pipeline configuration.
 
-## 🚀 MDM Deployment Guide
+- **`Jenkins/python_cve_sla_sync.py`**: Fetches CVE data, calculates SLA deadlines, parses MDM audit logs, and updates MDM script deadline maps.
+- **`Jenkins/security_notifier.py`**: Sends Slack alerts to device owners with content-hash deduplication and cooldown windows.
+- **`Jenkins/Jenkinsfile.python-sla`**: Runs the daily sync and notification workflow inside Jenkins with credential injection.
+- **`Jenkins/tests/test_python_cve_sla.py`**: Tests SLA deadline math, log parsing, script patching, and notification deduplication.
 
-### IRU (Kandji) (Custom Scripts / Automated Remediation)
-1. Navigate to **Library** > **Add New** > **Custom Script**.
-2. Paste the contents of [`Homebrew/audit_update.sh`](Homebrew/audit_update.sh) into the **Audit Script** section.
-3. Paste the contents of [`Homebrew/remediate_update.sh`](Homebrew/remediate_update.sh) into the **Remediation Script** section.
-4. Set execution frequency (e.g., daily or on policy run).
+### Monitors (`Monitors/`)
+
+This module tracks external displays connected to macOS devices for hardware asset inventory.
+See [`Monitors/README.md`](Monitors/README.md) for output schema and deployment notes.
+
+- **`Monitors/audit_monitors.sh`**: Checks whether local display inventory data is current and triggers collection when needed.
+- **`Monitors/remediate_monitors.sh`**: Reads connected display identifiers, serial numbers, and models from macOS system tools.
+
+## MDM Deployment
+
+### IRU (Kandji)
+
+1. Open **Library** and select **Add New**, then select **Custom Script**.
+2. Paste an audit script into the **Audit Script** field.
+3. Paste the matching remediation script into the **Remediation Script** field.
+4. Set the run frequency for your blueprint.
 
 ### Jamf Pro
-1. **Audit**: Create an **Extension Attribute** that utilizes the logic in `audit_update.sh` to return compliance status (`Compliant` / `Pending Remediation`).
-2. **Smart Group**: Create a Smart Group targeting devices where the Extension Attribute indicates pending updates.
-3. **Remediation Policy**: Create a policy scoped to that Smart Group that executes `remediate_update.sh` during maintenance windows or check-in.
 
----
+1. Create an **Extension Attribute** using the audit script logic to report device compliance.
+2. Create a **Smart Group** that targets non-compliant devices.
+3. Create a **Policy** scoped to that Smart Group to run the remediation script.
 
-## 📜 License
+## Verification
 
-This project is licensed under the [MIT License](LICENSE). You are free to use, adapt, and distribute these scripts in your corporate infrastructure.
+Run the test suites from the repository root:
+
+```zsh
+zsh Homebrew/tests/test_remediate_update.zsh
+python3 -m unittest discover -s Jenkins/tests -v
+```
+
+## License
+
+This project uses the [MIT License](LICENSE).
+You can use, modify, and distribute these scripts under the terms of that license.
